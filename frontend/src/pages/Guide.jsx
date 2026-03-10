@@ -36,6 +36,39 @@ export default function Guide() {
             GitHub Releases
           </a>
         </p>
+
+        <div className="border-t border-gray-800 pt-4 space-y-3">
+          <p className="text-sm font-medium text-gray-300">Для компьютера</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <StoreButton
+              icon={<WindowsIcon />}
+              label="Hiddify"
+              sublabel="Windows — рекомендуется"
+              href="https://github.com/hiddify/hiddify-app/releases/latest"
+            />
+            <StoreButton
+              icon={<WindowsIcon />}
+              label="v2rayN"
+              sublabel="Windows — классический"
+              href="https://github.com/2dust/v2rayN/releases/latest"
+            />
+            <StoreButton
+              icon={<LinuxIcon />}
+              label="Hiddify"
+              sublabel="Linux (AppImage / deb)"
+              href="https://github.com/hiddify/hiddify-app/releases/latest"
+            />
+            <StoreButton
+              icon={<LinuxIcon />}
+              label="v2rayA"
+              sublabel="Linux — веб-интерфейс"
+              href="https://github.com/v2rayA/v2rayA/releases/latest"
+            />
+          </div>
+          <p className="text-xs text-gray-600">
+            Все приложения бесплатны и с открытым исходным кодом. Поддерживают импорт VLESS-ссылок через буфер обмена.
+          </p>
+        </div>
       </section>
 
       {/* Step 2 — Add device */}
@@ -160,8 +193,8 @@ export default function Guide() {
             a="Нажмите кнопку подключения в HAPP повторно, или отключите VPN в системных настройках телефона."
           />
           <FAQ
-            q="Приложение есть только для мобильных?"
-            a="HAPP — только мобильное. Для компьютера можно использовать v2rayN (Windows), v2rayU (macOS) или Nekoray — они также поддерживают VLESS-ссылки."
+            q="Как добавить сервер на Windows / Linux?"
+            a="Скачайте Hiddify или v2rayN (Windows) / v2rayA (Linux). Скопируйте VLESS-ссылку в кабинете, в приложении выберите «Добавить из буфера обмена» или «Import from clipboard»."
           />
         </div>
       </section>
@@ -232,6 +265,22 @@ function AndroidIcon() {
   return (
     <svg viewBox="0 0 24 24" className="w-7 h-7 fill-current text-green-400">
       <path d="M17.523 15.341a.477.477 0 1 1 0-.953.477.477 0 0 1 0 .953m-11.046 0a.477.477 0 1 1 0-.953.477.477 0 0 1 0 .953M17.69 9.4l1.124-1.945a.23.23 0 0 0-.084-.315.23.23 0 0 0-.315.084l-1.138 1.97A7.3 7.3 0 0 0 12 8.285a7.3 7.3 0 0 0-5.278 2.909L5.585 7.224a.23.23 0 0 0-.315-.084.23.23 0 0 0-.084.315L6.31 9.4C4.634 10.283 3.5 11.95 3.5 13.87v.63h17v-.63c0-1.92-1.134-3.587-2.81-4.47" />
+    </svg>
+  );
+}
+
+function WindowsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-7 h-7 fill-current text-blue-400">
+      <path d="M3 12V6.75l6-1.32v6.57H3zm17-9v8.75h-7V4.68L20 3zM3 13h6v6.57l-6-1.32V13zm17 .25V22l-7-1.32V13h7z"/>
+    </svg>
+  );
+}
+
+function LinuxIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-7 h-7 fill-current text-yellow-400">
+      <path d="M12.504 0c-.155 0-.315.008-.48.021C7.576.336 3.24 3.655 3.24 8.561c0 1.972.518 3.738 1.362 5.209-.273.68-.455 1.398-.455 2.175 0 3.876 3.148 7.02 7.027 7.02 3.877 0 7.024-3.144 7.024-7.02 0-.777-.182-1.495-.455-2.175.844-1.471 1.362-3.237 1.362-5.209C19.105 3.558 15.981.336 12.504 0zm-.023 1.5c.252 0 .503.01.749.028C16.988 1.813 19.5 4.785 19.5 8.562c0 1.666-.457 3.215-1.236 4.51-.366-.555-.784-1.056-1.246-1.49.317-.765.488-1.6.488-2.476 0-3.557-2.867-6.438-6.425-6.438S4.656 5.55 4.656 9.106c0 .876.171 1.711.488 2.476-.462.434-.88.935-1.246 1.49C3.12 11.777 2.663 10.228 2.663 8.562c0-3.777 2.513-6.749 6.27-7.034.249-.018.5-.028.748-.028zM12.48 6c1.938 0 3.52 1.578 3.52 3.52 0 1.943-1.582 3.52-3.52 3.52S8.96 11.463 8.96 9.52C8.96 7.578 10.542 6 12.48 6zm0 1.5c-1.117 0-2.02.901-2.02 2.02 0 1.118.903 2.02 2.02 2.02 1.118 0 2.02-.902 2.02-2.02 0-1.119-.902-2.02-2.02-2.02zm-4.46 8.04c.724 0 1.31.586 1.31 1.31 0 .723-.586 1.31-1.31 1.31-.723 0-1.31-.587-1.31-1.31 0-.724.587-1.31 1.31-1.31zm8.92 0c.723 0 1.31.586 1.31 1.31 0 .723-.587 1.31-1.31 1.31-.724 0-1.31-.587-1.31-1.31 0-.724.586-1.31 1.31-1.31zM12.48 18c1.367 0 2.52.85 3.04 2.07-.94.6-2.05.93-3.04.93-.99 0-2.1-.33-3.04-.93.52-1.22 1.673-2.07 3.04-2.07z"/>
     </svg>
   );
 }
