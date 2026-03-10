@@ -56,6 +56,7 @@ export const statsApi = {
   online:      ()         => api.get('/stats/online'),
   deviceDaily: (id, days) => api.get(`/stats/devices/${id}/daily`, { params: { days } }),
   connections: (id)       => api.get(`/stats/devices/${id}/connections`),
+  audit:       (limit)    => api.get('/stats/audit', { params: { limit } }),
 };
 
 export default api;

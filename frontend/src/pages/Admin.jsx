@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { usersApi, statsApi } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
 import Modal from '../components/Modal';
@@ -194,6 +194,9 @@ export default function Admin() {
         </div>
       )}
 
+      {/* Audit log */}
+      <AuditLog />
+
       {/* Users table */}
       <div className="overflow-x-auto rounded-xl border border-gray-800">
         <table className="table-auto w-full">
@@ -336,6 +339,121 @@ export default function Admin() {
           onConfirm={handleDelete}
           onClose={() => setConfirmDelete(null)}
         />
+      )}
+    </div>
+  );
+}
+
+// ── Audit log ─────────────────────────────────────────────────────────────────
+
+const ACTION_LABELS = {
+  login_ok:       { label: 'Вход',                cls: 'bg-emerald-900/40 text-emerald-400' },
+  login_fail:     { label: 'Неудачный вход',      cls: 'bg-red-900/40 text-red-400' },
+  logout:         { label: 'Выход',               cls: 'bg-gray-800 text-gray-400' },
+  password_change:{ label: 'Смена пароля',        cls: 'bg-blue-900/40 text-blue-400' },
+  device_create:  { label: 'Устройство добавлено',cls: 'bg-brand-900/40 text-brand-400' },
+  device_delete:  { label: 'Устройство удалено',  cls: 'bg-red-900/40 text-red-400' },
+  device_rename:  { label: 'Переименование',      cls: 'bg-yellow-900/40 text-yellow-400' },
+  user_create:    { label: 'Пользователь создан', cls: 'bg-brand-900/40 text-brand-400' },
+  user_delete:    { label: 'Пользователь удалён', cls: 'bg-red-900/40 text-red-400' },
+  user_block:     { label: 'Заблокирован',        cls: 'bg-red-900/40 text-red-400' },
+  user_unblock:   { label: 'Разблокирован',       cls: 'bg-emerald-900/40 text-emerald-400' },
+};
+
+function auditDetails(action, details) {
+  if (!details) return '';
+  if (action === 'login_ok' || action === 'login_fail') return details.login || '';
+  if (action === 'device_create') return details.device_name || '';
+  if (action === 'device_delete') return details.device_name || '';
+  if (action === 'device_rename') return `${details.old_name} → ${details.new_name}`;
+  if (action === 'user_create' || action === 'user_delete') return details.login || '';
+  if (action === 'user_block' || action === 'user_unblock') return details.login || '';
+  return '';
+}
+
+function AuditLog() {
+  const [entries, setEntries]   = useState(null);
+  const [loading, setLoading]   = useState(false);
+  const [open,    setOpen]      = useState(false);
+  const loaded = useRef(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await statsApi.audit(200);
+      setEntries(res.data);
+      loaded.current = true;
+    } catch {
+      setEntries([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const toggle = () => {
+    if (!open && !loaded.current) load();
+    setOpen(v => !v);
+  };
+
+  return (
+    <div className="card">
+      <button
+        className="flex w-full items-center justify-between text-sm font-medium"
+        onClick={toggle}
+      >
+        <span>Журнал действий</span>
+        <span className="text-gray-500">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div className="mt-4">
+          {loading && <p className="text-sm text-gray-500">Загрузка...</p>}
+          {entries && entries.length === 0 && (
+            <p className="text-sm text-gray-500">Записей нет</p>
+          )}
+          {entries && entries.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="table-auto w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Время</th>
+                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Пользователь</th>
+                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Действие</th>
+                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Детали</th>
+                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">IP</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map(e => {
+                    const meta = ACTION_LABELS[e.action] || { label: e.action, cls: 'bg-gray-800 text-gray-400' };
+                    return (
+                      <tr key={e.id} className="border-t border-gray-800 hover:bg-gray-900/30">
+                        <td className="py-2 px-3 text-xs text-gray-500 whitespace-nowrap">
+                          {new Date(e.created_at).toLocaleString('ru-RU', {
+                            day: '2-digit', month: '2-digit', year: '2-digit',
+                            hour: '2-digit', minute: '2-digit', second: '2-digit',
+                          })}
+                        </td>
+                        <td className="py-2 px-3 text-xs font-medium">
+                          {e.user_login || <span className="text-gray-600">—</span>}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className={`badge text-xs ${meta.cls}`}>{meta.label}</span>
+                        </td>
+                        <td className="py-2 px-3 text-xs text-gray-400">
+                          {auditDetails(e.action, e.details) || <span className="text-gray-600">—</span>}
+                        </td>
+                        <td className="py-2 px-3 text-xs font-mono text-gray-500">
+                          {e.ip || '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

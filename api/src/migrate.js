@@ -41,6 +41,22 @@ async function runMigrations() {
   await db.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`);
   await db.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_ip INET`);
 
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id         SERIAL PRIMARY KEY,
+      user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      action     VARCHAR(64) NOT NULL,
+      details    JSONB NOT NULL DEFAULT '{}',
+      ip         INET,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_audit_log_created
+      ON audit_log(created_at DESC)
+  `);
+
   console.log('[migrate] Done');
 }
 

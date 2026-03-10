@@ -3,6 +3,7 @@
 const bcrypt = require('bcryptjs');
 const db = require('../db');
 const { signToken, blacklistToken } = require('../auth');
+const audit = require('../audit');
 
 module.exports = async function authRoutes(fastify) {
   // POST /auth/login
@@ -40,6 +41,7 @@ module.exports = async function authRoutes(fastify) {
     if (rows.length === 0) {
       // Constant-time dummy compare to prevent timing attacks
       await bcrypt.compare(password, '$2a$12$invalidhashpadding000000000000000000000000000000000000');
+      audit.log(null, 'login_fail', { login }, request.ip);
       return reply.status(401).send({ error: 'Unauthorized', message: 'Invalid credentials' });
     }
 
@@ -47,14 +49,17 @@ module.exports = async function authRoutes(fastify) {
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
+      audit.log(user.id, 'login_fail', { login }, request.ip);
       return reply.status(401).send({ error: 'Unauthorized', message: 'Invalid credentials' });
     }
 
     if (user.expires_at && new Date(user.expires_at) < new Date()) {
+      audit.log(user.id, 'login_fail', { login, reason: 'expired' }, request.ip);
       return reply.status(403).send({ error: 'Forbidden', message: 'Account has expired' });
     }
 
     const { token } = signToken(fastify, user);
+    audit.log(user.id, 'login_ok', { login }, request.ip);
     return reply.send({ token, role: user.role, login: user.login });
   });
 
@@ -93,6 +98,7 @@ module.exports = async function authRoutes(fastify) {
     const hash = await bcrypt.hash(new_password, 12);
     await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, userId]);
 
+    audit.log(userId, 'password_change', {}, request.ip);
     return reply.send({ message: 'Password updated' });
   });
 
@@ -100,10 +106,11 @@ module.exports = async function authRoutes(fastify) {
   fastify.post('/logout', {
     onRequest: [fastify.authenticate],
   }, async (request, reply) => {
-    const { jti, exp } = request.user;
+    const { jti, exp, sub: userId } = request.user;
     if (jti && exp) {
       blacklistToken(jti, exp * 1000);
     }
+    audit.log(userId, 'logout', {}, request.ip);
     return reply.send({ message: 'Logged out' });
   });
 };

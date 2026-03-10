@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const qrcode = require('qrcode');
 const db = require('../db');
 const xray = require('../xray');
+const audit = require('../audit');
 
 const MAX_DEVICES_PER_USER = 5;
 
@@ -128,6 +129,7 @@ module.exports = async function devicesRoutes(fastify) {
     const link = buildVlessLink({ uuid, domain, publicKey, shortId, deviceName: name });
     const qr   = await generateQr(link);
 
+    audit.log(userId, 'device_create', { device_id: device.id, device_name: name }, request.ip);
     return reply.status(201).send({ ...device, link, qr });
   });
 
@@ -165,6 +167,7 @@ module.exports = async function devicesRoutes(fastify) {
       'UPDATE devices SET name = $1 WHERE id = $2 RETURNING *',
       [name, id]
     );
+    audit.log(userId, 'device_rename', { device_id: id, old_name: device.name, new_name: name }, request.ip);
     return reply.send(rows[0]);
   });
 
@@ -187,6 +190,7 @@ module.exports = async function devicesRoutes(fastify) {
     }
 
     await db.query('DELETE FROM devices WHERE id = $1', [id]);
+    audit.log(userId, 'device_delete', { device_id: id, device_name: device.name }, request.ip);
     return reply.status(204).send();
   });
 

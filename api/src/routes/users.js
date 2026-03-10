@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const qrcode = require('qrcode');
 const db = require('../db');
 const xray = require('../xray');
+const audit = require('../audit');
 
 const MAX_DEVICES_PER_USER = 5;
 
@@ -76,6 +77,7 @@ module.exports = async function usersRoutes(fastify) {
       [login, hash, expires_at || null]
     );
 
+    audit.log(request.user.sub, 'user_create', { user_id: rows[0].id, login }, request.ip);
     return reply.status(201).send(rows[0]);
   });
 
@@ -98,7 +100,7 @@ module.exports = async function usersRoutes(fastify) {
     const { id } = request.params;
     const { expires_at, disabled, password } = request.body;
 
-    const { rows: existing } = await db.query('SELECT id FROM users WHERE id = $1', [id]);
+    const { rows: existing } = await db.query('SELECT id, login, expires_at FROM users WHERE id = $1', [id]);
     if (existing.length === 0) {
       return reply.status(404).send({ error: 'Not Found', message: 'User not found' });
     }
@@ -134,6 +136,16 @@ module.exports = async function usersRoutes(fastify) {
        RETURNING id, login, role, expires_at, created_at`,
       values
     );
+
+    const isNowBlocked = rows[0].expires_at && new Date(rows[0].expires_at) <= new Date();
+    const wasBlocked   = existing[0].expires_at && new Date(existing[0].expires_at) <= new Date();
+    if (expires_at !== undefined || disabled !== undefined) {
+      const action = isNowBlocked && !wasBlocked ? 'user_block'
+                   : !isNowBlocked && wasBlocked  ? 'user_unblock'
+                   : null;
+      if (action) audit.log(request.user.sub, action, { user_id: id, login: rows[0].login }, request.ip);
+    }
+
     return reply.send(rows[0]);
   });
 
@@ -160,6 +172,7 @@ module.exports = async function usersRoutes(fastify) {
 
     // CASCADE deletes devices
     await db.query('DELETE FROM users WHERE id = $1', [id]);
+    audit.log(request.user.sub, 'user_delete', { user_id: id, login: userRows[0].login }, request.ip);
     return reply.status(204).send();
   });
 
@@ -240,6 +253,7 @@ module.exports = async function usersRoutes(fastify) {
     const link = buildVlessLink({ uuid, domain, publicKey, shortId, deviceName: name });
     const qr   = await qrcode.toDataURL(link, { errorCorrectionLevel: 'M', width: 300 });
 
+    audit.log(request.user.sub, 'device_create', { device_id: device.id, device_name: name, for_user_id: id }, request.ip);
     return reply.status(201).send({ ...device, link, qr });
   });
 
@@ -273,6 +287,7 @@ module.exports = async function usersRoutes(fastify) {
     }
 
     await db.query('DELETE FROM devices WHERE id = $1', [deviceId]);
+    audit.log(request.user.sub, 'device_delete', { device_id: deviceId, device_name: rows[0].name, for_user_id: userId }, request.ip);
     return reply.status(204).send();
   });
 };

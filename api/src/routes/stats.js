@@ -261,4 +261,27 @@ module.exports = async function statsRoutes(fastify) {
       user_traffic: userTraffic,
     });
   });
+
+  // GET /stats/audit  (superadmin only)
+  fastify.get('/audit', {
+    onRequest: [fastify.authenticate, fastify.requireSuperadmin],
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: { limit: { type: 'integer', minimum: 1, maximum: 500, default: 200 } },
+      },
+    },
+  }, async (request, reply) => {
+    const limit = request.query.limit || 200;
+    const { rows } = await db.query(
+      `SELECT a.id, a.action, a.details, a.ip, a.created_at,
+              u.login AS user_login
+       FROM audit_log a
+       LEFT JOIN users u ON u.id = a.user_id
+       ORDER BY a.created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return reply.send(rows);
+  });
 };
