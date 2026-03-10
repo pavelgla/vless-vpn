@@ -1,0 +1,568 @@
+"""VLESS VPN Telegram bot."""
+import asyncio
+import io
+import logging
+import os
+import urllib.parse
+from datetime import datetime, timezone
+from pathlib import Path
+
+import qrcode
+from telegram import Update, BotCommand
+from telegram.constants import ParseMode
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ConversationHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+
+import api
+import db
+
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    level=logging.INFO,
+)
+log = logging.getLogger(__name__)
+
+# Conversation states
+AWAIT_LOGIN, AWAIT_PASSWORD = range(2)
+
+# In-memory notification tracking: set of (user_id, "7d" | "1d")
+_notified: set[tuple[int, str]] = set()
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def build_vless_link(uuid: str, name: str) -> str:
+    domain = os.getenv("DOMAIN", "")
+    pub_key = os.getenv("REALITY_PUBLIC_KEY", "")
+    short_id = os.getenv("REALITY_SHORT_ID", "")
+    encoded = urllib.parse.quote(name)
+    return (
+        f"vless://{uuid}@{domain}:443"
+        f"?type=tcp&security=reality"
+        f"&pbk={pub_key}&sid={short_id}"
+        f"&fp=chrome&flow=xtls-rprx-vision"
+        f"#{encoded}"
+    )
+
+
+def make_qr_image(link: str) -> io.BytesIO:
+    img = qrcode.make(link)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+def device_status(last_seen_at) -> str:
+    if not last_seen_at:
+        return "⚫"
+    delta = datetime.now(timezone.utc) - last_seen_at.replace(tzinfo=timezone.utc)
+    return "🟢" if delta.total_seconds() < 300 else "⚫"
+
+
+def fmt_expires(expires_at) -> str:
+    if not expires_at:
+        return "бессрочно"
+    dt = expires_at if hasattr(expires_at, "tzinfo") else expires_at
+    return dt.strftime("%d.%m.%Y")
+
+
+def fmt_bytes(b: int | None) -> str:
+    if not b:
+        return "0 B"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if b < 1024:
+            return f"{b:.1f} {unit}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+
+async def get_linked_user(telegram_id: int):
+    """Return DB row or None; sends message if not linked."""
+    return await db.get_user_by_telegram_id(telegram_id)
+
+
+async def is_admin(telegram_id: int) -> bool:
+    user = await db.get_user_by_telegram_id(telegram_id)
+    return bool(user and user["role"] == "superadmin")
+
+
+# ── /start — account linking ─────────────────────────────────────────────────
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = await db.get_user_by_telegram_id(update.effective_user.id)
+    if user:
+        await update.message.reply_text(
+            f"✅ Аккаунт уже привязан: *{user['login']}*\n"
+            "Используйте /help для списка команд.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        "👋 Добро пожаловать в VPN Panel!\n\n"
+        "Для привязки аккаунта введите ваш *логин*:",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return AWAIT_LOGIN
+
+
+async def got_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["link_login"] = update.message.text.strip()
+    await update.message.reply_text("Введите *пароль*:", parse_mode=ParseMode.MARKDOWN)
+    return AWAIT_PASSWORD
+
+
+async def got_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    login = context.user_data.pop("link_login", "")
+    password = update.message.text.strip()
+    telegram_id = update.effective_user.id
+
+    # Verify credentials via API
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{os.getenv('API_BASE_URL', 'http://api:3000')}/auth/login",
+                json={"login": login, "password": password},
+            )
+        if resp.status_code == 401:
+            await update.message.reply_text("❌ Неверный логин или пароль. Попробуйте /start снова.")
+            return ConversationHandler.END
+        if resp.status_code == 403:
+            await update.message.reply_text("❌ Аккаунт истёк или заблокирован.")
+            return ConversationHandler.END
+        resp.raise_for_status()
+        user_data = resp.json()
+    except Exception as e:
+        log.error("Login check failed: %s", e)
+        await update.message.reply_text("⚠️ Ошибка сервера. Попробуйте позже.")
+        return ConversationHandler.END
+
+    # Save telegram_id
+    user = await db.get_user_by_login(login)
+    if not user:
+        await update.message.reply_text("❌ Пользователь не найден.")
+        return ConversationHandler.END
+
+    if user["telegram_id"] and user["telegram_id"] != telegram_id:
+        await update.message.reply_text("⚠️ Этот аккаунт уже привязан к другому Telegram.")
+        return ConversationHandler.END
+
+    await db.set_telegram_id(user["id"], telegram_id)
+    await update.message.reply_text(
+        f"✅ Аккаунт *{login}* успешно привязан!\n"
+        "Используйте /help для списка команд.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return ConversationHandler.END
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Отменено.")
+    return ConversationHandler.END
+
+
+# ── User commands ────────────────────────────────────────────────────────────
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    admin = await is_admin(update.effective_user.id)
+    text = (
+        "📋 *Команды:*\n\n"
+        "/start — привязка аккаунта\n"
+        "/devices — список устройств\n"
+        "/qr `<имя>` — QR-код устройства\n"
+        "/traffic — трафик за месяц\n"
+        "/expire — срок действия аккаунта\n"
+        "/help — этот список\n"
+    )
+    if admin:
+        text += (
+            "\n👑 *Команды суперадмина:*\n\n"
+            "/users — список пользователей\n"
+            "/adduser `<логин>` `<пароль>` `[ГГГГ-ММ-ДД]` — создать пользователя\n"
+            "/setexpire `<логин>` `<ГГГГ-ММ-ДД>` — установить срок\n"
+            "/disable `<логин>` — заблокировать\n"
+            "/enable `<логин>` — разблокировать\n"
+            "/stats — нагрузка сервера\n"
+        )
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+
+async def cmd_devices(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await get_linked_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Аккаунт не привязан. Используйте /start")
+        return
+
+    devices = await db.get_devices(user["id"])
+    if not devices:
+        await update.message.reply_text("У вас нет устройств.")
+        return
+
+    lines = [f"📱 *Устройства ({len(devices)}/5):*\n"]
+    for d in devices:
+        status = device_status(d["last_seen_at"])
+        last = d["last_seen_at"].strftime("%d.%m %H:%M") if d["last_seen_at"] else "никогда"
+        lines.append(f"{status} *{d['name']}*\n   ┗ последний раз: {last}")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+
+async def cmd_qr(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await get_linked_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Аккаунт не привязан. Используйте /start")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Использование: /qr `<имя устройства>`", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    name = " ".join(context.args)
+    device = await db.get_device_by_name(user["id"], name)
+    if not device:
+        await update.message.reply_text(f"Устройство «{name}» не найдено. Проверьте /devices")
+        return
+
+    link = build_vless_link(device["uuid"], device["name"])
+    qr_buf = make_qr_image(link)
+
+    await update.message.reply_photo(
+        qr_buf,
+        caption=f"📱 *{device['name']}*\n\n`{link}`",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+
+async def cmd_traffic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await get_linked_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Аккаунт не привязан. Используйте /start")
+        return
+
+    try:
+        # Get stats via API using superadmin JWT for this user's perspective
+        # We call /stats/server and filter — or approximate via device list
+        devices = await db.get_devices(user["id"])
+        if not devices:
+            await update.message.reply_text("Устройств нет.")
+            return
+        # Traffic info comes from xray — bot calls API to get it
+        # Using superadmin can't get per-user stats directly, so show device list
+        # with a note that detailed stats are on the web panel
+        lines = ["📊 *Трафик (за всё время):*\n"]
+        for d in devices:
+            lines.append(f"• *{d['name']}* — данные на панели")
+        lines.append("\n💻 Подробная статистика: веб-панель")
+        await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        log.error("cmd_traffic error: %s", e)
+        await update.message.reply_text("⚠️ Ошибка получения статистики.")
+
+
+async def cmd_expire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await get_linked_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Аккаунт не привязан. Используйте /start")
+        return
+
+    exp = fmt_expires(user["expires_at"])
+    if not user["expires_at"]:
+        msg = f"✅ Аккаунт *{user['login']}* действует бессрочно."
+    else:
+        expires_dt = user["expires_at"]
+        days_left = (expires_dt.replace(tzinfo=None) - datetime.utcnow()).days
+        if days_left <= 0:
+            msg = f"❌ Аккаунт *{user['login']}* истёк ({exp})."
+        elif days_left <= 7:
+            msg = f"⚠️ Аккаунт *{user['login']}* истекает через *{days_left} дн.* ({exp})!"
+        else:
+            msg = f"✅ Аккаунт *{user['login']}* действует до *{exp}* ({days_left} дн.)."
+
+    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+
+# ── Admin commands ───────────────────────────────────────────────────────────
+
+def admin_only(handler):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await is_admin(update.effective_user.id):
+            await update.message.reply_text("❌ Нет доступа.")
+            return
+        return await handler(update, context)
+    wrapper.__name__ = handler.__name__
+    return wrapper
+
+
+@admin_only
+async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    users = await db.get_all_users()
+    if not users:
+        await update.message.reply_text("Пользователей нет.")
+        return
+
+    lines = ["👥 *Пользователи:*\n"]
+    for u in users:
+        is_expired = u["expires_at"] and u["expires_at"].replace(tzinfo=None) < datetime.utcnow()
+        status = "🔴" if is_expired else "🟢"
+        tg = "📱" if u["telegram_id"] else "  "
+        role_mark = "👑 " if u["role"] == "superadmin" else ""
+        exp = fmt_expires(u["expires_at"])
+        lines.append(
+            f"{status}{tg} {role_mark}*{u['login']}* "
+            f"[{u['device_count']}/5] до {exp}"
+        )
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+
+@admin_only
+async def cmd_adduser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # /adduser <login> <password> [YYYY-MM-DD]
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Использование: `/adduser <логин> <пароль> [ГГГГ-ММ-ДД]`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    login, password = args[0], args[1]
+    expires_at = f"{args[2]}T00:00:00Z" if len(args) >= 3 else None
+
+    try:
+        user = await api.create_user(login, password, expires_at)
+        await update.message.reply_text(
+            f"✅ Пользователь *{user['login']}* создан (id={user['id']}).",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception as e:
+        msg = str(e)
+        await update.message.reply_text(f"❌ Ошибка: {msg}")
+
+
+@admin_only
+async def cmd_setexpire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # /setexpire <login> <YYYY-MM-DD>
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Использование: `/setexpire <логин> <ГГГГ-ММ-ДД>`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    login, date_str = context.args[0], context.args[1]
+    user = await db.get_user_by_login(login)
+    if not user:
+        await update.message.reply_text(f"❌ Пользователь «{login}» не найден.")
+        return
+
+    try:
+        await api.set_expire(user["id"], f"{date_str}T00:00:00Z")
+        await update.message.reply_text(
+            f"✅ Срок действия *{login}* установлен до *{date_str}*.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
+@admin_only
+async def cmd_disable(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Использование: `/disable <логин>`", parse_mode=ParseMode.MARKDOWN)
+        return
+    login = context.args[0]
+    user = await db.get_user_by_login(login)
+    if not user:
+        await update.message.reply_text(f"❌ Пользователь «{login}» не найден.")
+        return
+    try:
+        await api.disable_user(user["id"])
+        # Notify the user if they have telegram_id
+        if user["telegram_id"]:
+            try:
+                await context.bot.send_message(
+                    chat_id=user["telegram_id"],
+                    text="❌ Ваш аккаунт заблокирован. Обратитесь к администратору.",
+                )
+            except Exception:
+                pass
+        await update.message.reply_text(f"✅ Пользователь *{login}* заблокирован.", parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
+@admin_only
+async def cmd_enable(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Использование: `/enable <логин>`", parse_mode=ParseMode.MARKDOWN)
+        return
+    login = context.args[0]
+    user = await db.get_user_by_login(login)
+    if not user:
+        await update.message.reply_text(f"❌ Пользователь «{login}» не найден.")
+        return
+    try:
+        await api.enable_user(user["id"])
+        await update.message.reply_text(f"✅ Пользователь *{login}* разблокирован.", parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
+@admin_only
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        s = await api.server_stats()
+        cpu = s.get("cpu", {})
+        mem = s.get("memory", {})
+        traffic = s.get("traffic", {})
+
+        text = (
+            "📊 *Статистика сервера:*\n\n"
+            f"🖥 CPU: *{cpu.get('usage_pct', '?')}%* "
+            f"(load: {', '.join(str(round(x, 2)) for x in cpu.get('loadavg', []))})\n"
+            f"💾 RAM: *{mem.get('used_mb', '?')} / {mem.get('total_mb', '?')} MB* "
+            f"({mem.get('usage_pct', '?')}%)\n"
+            f"👥 Пользователей: *{s.get('users', '?')}*\n"
+            f"📱 Устройств: *{s.get('devices', '?')}*\n"
+            f"📤 Трафик ↑: *{fmt_bytes(traffic.get('uplink', 0))}*\n"
+            f"📥 Трафик ↓: *{fmt_bytes(traffic.get('downlink', 0))}*\n"
+        )
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        log.error("cmd_stats error: %s", e)
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
+# ── Notification jobs ────────────────────────────────────────────────────────
+
+async def job_notify_expiry(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send expiry warnings every 6 hours."""
+    now = datetime.utcnow()
+
+    for days, label, emoji in [(7, "7d", "⚠️"), (1, "1d", "🚨")]:
+        users = await db.get_expiring_users(days)
+        for u in users:
+            key = (u["id"], label)
+            if key in _notified:
+                continue
+
+            # Only notify if expiry is exactly within this window
+            expires = u["expires_at"].replace(tzinfo=None)
+            days_left = (expires - now).days
+            if label == "7d" and not (3 <= days_left <= 7):
+                continue
+            if label == "1d" and days_left > 1:
+                continue
+
+            try:
+                if emoji == "⚠️":
+                    msg = (
+                        f"⚠️ *Предупреждение*\n\n"
+                        f"Ваш доступ к VPN истекает через *{days_left} дн.* "
+                        f"({expires.strftime('%d.%m.%Y')}).\n"
+                        f"Обратитесь к администратору для продления."
+                    )
+                else:
+                    msg = (
+                        f"🚨 *Срочно!*\n\n"
+                        f"Ваш доступ к VPN истекает *завтра* "
+                        f"({expires.strftime('%d.%m.%Y')}).\n"
+                        f"Срочно обратитесь к администратору!"
+                    )
+                await context.bot.send_message(
+                    chat_id=u["telegram_id"],
+                    text=msg,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                _notified.add(key)
+                log.info("Sent %s expiry notification to user %s", label, u["login"])
+            except Exception as e:
+                log.warning("Failed to notify user %s: %s", u["login"], e)
+
+
+# ── Bot setup ────────────────────────────────────────────────────────────────
+
+async def post_init(application: Application) -> None:
+    await db.init()
+    log.info("Database pool initialized")
+
+    await application.bot.set_my_commands([
+        BotCommand("start",     "Привязать аккаунт"),
+        BotCommand("devices",   "Список устройств"),
+        BotCommand("qr",        "QR-код устройства"),
+        BotCommand("traffic",   "Статистика трафика"),
+        BotCommand("expire",    "Срок действия аккаунта"),
+        BotCommand("help",      "Список команд"),
+    ])
+
+    # Write health marker
+    Path("/tmp/bot.ready").touch()
+    log.info("Bot ready")
+
+
+async def post_shutdown(application: Application) -> None:
+    await db.close()
+    Path("/tmp/bot.ready").unlink(missing_ok=True)
+
+
+def main() -> None:
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
+
+    app = (
+        Application.builder()
+        .token(token)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+
+    # /start conversation
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("start", cmd_start)],
+        states={
+            AWAIT_LOGIN:    [MessageHandler(filters.TEXT & ~filters.COMMAND, got_login)],
+            AWAIT_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_password)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    app.add_handler(conv)
+
+    # User commands
+    app.add_handler(CommandHandler("help",    cmd_help))
+    app.add_handler(CommandHandler("devices", cmd_devices))
+    app.add_handler(CommandHandler("qr",      cmd_qr))
+    app.add_handler(CommandHandler("traffic", cmd_traffic))
+    app.add_handler(CommandHandler("expire",  cmd_expire))
+
+    # Admin commands
+    app.add_handler(CommandHandler("users",     cmd_users))
+    app.add_handler(CommandHandler("adduser",   cmd_adduser))
+    app.add_handler(CommandHandler("setexpire", cmd_setexpire))
+    app.add_handler(CommandHandler("disable",   cmd_disable))
+    app.add_handler(CommandHandler("enable",    cmd_enable))
+    app.add_handler(CommandHandler("stats",     cmd_stats))
+
+    # Expiry notification job: every 6 hours
+    app.job_queue.run_repeating(
+        job_notify_expiry,
+        interval=6 * 3600,
+        first=60,  # start 60s after launch
+    )
+
+    log.info("Starting bot (polling)")
+    app.run_polling(drop_pending_updates=True)
+
+
+if __name__ == "__main__":
+    main()
