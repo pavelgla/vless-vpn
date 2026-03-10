@@ -68,8 +68,7 @@
           "tls"
         ],
         "routeOnly": false
-      },
-      "acceptProxyProtocol": true
+      }
     }
   ],
   "outbounds": [
