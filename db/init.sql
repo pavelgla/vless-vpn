@@ -25,11 +25,34 @@ CREATE TABLE IF NOT EXISTS devices (
     CONSTRAINT devices_name_unique_per_user UNIQUE (user_id, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_devices_user_id  ON devices(user_id);
-CREATE INDEX IF NOT EXISTS idx_devices_uuid     ON devices(uuid);
-CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
-CREATE INDEX IF NOT EXISTS idx_users_login      ON users(login);
+-- Daily traffic counters per device (accumulated by the API poller)
+CREATE TABLE IF NOT EXISTS traffic_daily (
+    id         SERIAL PRIMARY KEY,
+    device_id  INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    date       DATE    NOT NULL,
+    bytes_up   BIGINT  NOT NULL DEFAULT 0,
+    bytes_down BIGINT  NOT NULL DEFAULT 0,
+    UNIQUE (device_id, date)
+);
+
+-- Connection events: one row per accepted VLESS session
+CREATE TABLE IF NOT EXISTS connection_log (
+    id           SERIAL  PRIMARY KEY,
+    device_id    INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    connected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    client_ip    INET
+);
+
+CREATE INDEX IF NOT EXISTS idx_devices_user_id           ON devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_devices_uuid              ON devices(uuid);
+CREATE INDEX IF NOT EXISTS idx_users_telegram_id         ON users(telegram_id);
+CREATE INDEX IF NOT EXISTS idx_users_login               ON users(login);
+CREATE INDEX IF NOT EXISTS idx_traffic_daily_device_date ON traffic_daily(device_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_connection_log_device     ON connection_log(device_id, connected_at DESC);
 
 COMMENT ON COLUMN users.role IS 'superadmin | user';
 COMMENT ON COLUMN users.expires_at IS 'NULL means no expiry (superadmin always active)';
-COMMENT ON COLUMN devices.name IS 'Arbitrary device name, up to 32 chars, unique per user';
+COMMENT ON COLUMN devices.last_seen_at IS 'Updated every 30s by poller when device has active traffic';
+COMMENT ON COLUMN devices.last_ip IS 'Real client IP from last connection (via PROXY protocol)';
+COMMENT ON TABLE  traffic_daily IS 'Accumulated from xray stats API every 30s, reset=true per poll';
+COMMENT ON TABLE  connection_log IS 'One row per accepted VLESS connection from access log';

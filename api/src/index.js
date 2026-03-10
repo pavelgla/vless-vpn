@@ -25,7 +25,7 @@ async function bootstrap() {
   });
 
   await fastify.register(require('@fastify/rate-limit'), {
-    global: false, // applied per-route
+    global: false,
     max: 100,
     timeWindow: '1 minute',
   });
@@ -49,9 +49,7 @@ async function bootstrap() {
   // ── Error handler ─────────────────────────────────────────────────────────
   fastify.setErrorHandler((error, request, reply) => {
     const status = error.statusCode || 500;
-    if (status >= 500) {
-      fastify.log.error(error);
-    }
+    if (status >= 500) fastify.log.error(error);
     reply.status(status).send({
       error: error.name || 'Error',
       message: error.message,
@@ -63,6 +61,18 @@ async function bootstrap() {
   const port = parseInt(process.env.PORT || '3000', 10);
   await fastify.listen({ port, host: '0.0.0.0' });
   fastify.log.info(`API listening on port ${port}`);
+
+  // ── Migrations + Poller (after DB is ready) ───────────────────────────────
+  const { runMigrations } = require('./migrate');
+  const { startPoller }   = require('./poller');
+
+  try {
+    await runMigrations();
+  } catch (err) {
+    fastify.log.error({ err }, 'Migration failed');
+  }
+
+  startPoller();
 }
 
 bootstrap().catch((err) => {

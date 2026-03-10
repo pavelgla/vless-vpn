@@ -8,9 +8,7 @@ const api = axios.create({
 // Attach JWT to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+  if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
@@ -28,33 +26,36 @@ api.interceptors.response.use(
 );
 
 export const authApi = {
-  login:          (data)        => api.post('/auth/login', data),
-  logout:         ()            => api.post('/auth/logout'),
-  changePassword: (data)        => api.post('/auth/change-password', data),
+  login:          (data) => api.post('/auth/login', data),
+  logout:         ()     => api.post('/auth/logout'),
+  changePassword: (data) => api.post('/auth/change-password', data),
 };
 
 export const devicesApi = {
-  list:   ()              => api.get('/devices'),
-  create: (data)          => api.post('/devices', data),
-  rename: (id, data)      => api.patch(`/devices/${id}`, data),
-  remove: (id)            => api.delete(`/devices/${id}`),
-  qr:     (id)            => api.get(`/devices/${id}/qr`),
-  link:   (id)            => api.get(`/devices/${id}/link`),
+  list:   ()         => api.get('/devices'),
+  create: (data)     => api.post('/devices', data),
+  rename: (id, data) => api.patch(`/devices/${id}`, data),
+  remove: (id)       => api.delete(`/devices/${id}`),
+  qr:     (id)       => api.get(`/devices/${id}/qr`),
+  link:   (id)       => api.get(`/devices/${id}/link`),
 };
 
 export const usersApi = {
-  list:          ()                      => api.get('/users'),
-  create:        (data)                  => api.post('/users', data),
-  update:        (id, data)              => api.patch(`/users/${id}`, data),
-  remove:        (id)                    => api.delete(`/users/${id}`),
-  devices:       (id)                    => api.get(`/users/${id}/devices`),
-  addDevice:     (userId, data)          => api.post(`/users/${userId}/devices`, data),
-  removeDevice:  (userId, deviceId)      => api.delete(`/users/${userId}/devices/${deviceId}`),
+  list:         ()                 => api.get('/users'),
+  create:       (data)             => api.post('/users', data),
+  update:       (id, data)         => api.patch(`/users/${id}`, data),
+  remove:       (id)               => api.delete(`/users/${id}`),
+  devices:      (id)               => api.get(`/users/${id}/devices`),
+  addDevice:    (userId, data)     => api.post(`/users/${userId}/devices`, data),
+  removeDevice: (userId, deviceId) => api.delete(`/users/${userId}/devices/${deviceId}`),
 };
 
 export const statsApi = {
-  me:     () => api.get('/stats/me'),
-  server: () => api.get('/stats/server'),
+  me:          ()         => api.get('/stats/me'),
+  server:      ()         => api.get('/stats/server'),
+  online:      ()         => api.get('/stats/online'),
+  deviceDaily: (id, days) => api.get(`/stats/devices/${id}/daily`, { params: { days } }),
+  connections: (id)       => api.get(`/stats/devices/${id}/connections`),
 };
 
 export default api;

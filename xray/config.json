@@ -4,14 +4,44 @@
     "access": "/dev/stdout",
     "error": "/dev/stderr"
   },
+  "stats": {},
+  "api": {
+    "tag": "xray-api",
+    "services": [
+      "StatsService"
+    ]
+  },
+  "policy": {
+    "levels": {
+      "0": {
+        "statsUserUplink": true,
+        "statsUserDownlink": true
+      }
+    }
+  },
   "inbounds": [
+    {
+      "tag": "xray-api-in",
+      "listen": "127.0.0.1",
+      "port": 8080,
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "127.0.0.1"
+      }
+    },
     {
       "tag": "vless-reality",
       "listen": "0.0.0.0",
       "port": 443,
       "protocol": "vless",
       "settings": {
-        "clients": [],
+        "clients": [
+          {
+            "id": "7dba7dbd-83ac-42a5-b452-5d50e1e4a4d4",
+            "email": "1_7dba7dbd-83ac-42a5-b452-5d50e1e4a4d4",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
         "decryption": "none"
       },
       "streamSettings": {
@@ -25,9 +55,9 @@
             "www.microsoft.com",
             "microsoft.com"
           ],
-          "privateKey": "${REALITY_PRIVATE_KEY}",
+          "privateKey": "iIRh6u0MHKBKmkF2b85vZtlxk_X27O6X-ot0Wb59oXg",
           "shortIds": [
-            "${REALITY_SHORT_ID}"
+            "fcce887a"
           ]
         }
       },
@@ -38,7 +68,8 @@
           "tls"
         ],
         "routeOnly": false
-      }
+      },
+      "acceptProxyProtocol": true
     }
   ],
   "outbounds": [
@@ -60,6 +91,13 @@
   "routing": {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
+      {
+        "type": "field",
+        "inboundTag": [
+          "xray-api-in"
+        ],
+        "outboundTag": "xray-api"
+      },
       {
         "type": "field",
         "ip": [
