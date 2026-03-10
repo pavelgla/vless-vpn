@@ -1,6 +1,16 @@
 # VLESS VPN Panel
 
-Self-hosted VPN panel for personal/family use (1-5 users). Built on Xray-core with VLESS+Reality transport, managed via a web panel and Telegram bot.
+Self-hosted VPN panel for personal/family use (1–10 users). Built on Xray-core with VLESS+Reality transport, managed via a web panel and Telegram bot.
+
+## Features
+
+- **VLESS + Reality** — traffic is indistinguishable from normal HTTPS (camouflages as Microsoft)
+- **Web panel** — manage users and devices, view traffic charts, online status, connection history
+- **Per-device QR codes** — scan to connect in seconds
+- **Statistics** — daily traffic charts (Recharts), real-time online devices, connection log with client IPs
+- **Audit log** — records logins, device creation/deletion, user management (admin only, paginated)
+- **Telegram bot** — manage devices and users without opening the browser
+- **Setup guide** — built-in page with step-by-step HAPP/Hiddify/v2rayN setup instructions
 
 ## Stack
 
@@ -84,16 +94,19 @@ Users can add their own devices from the panel (limit: 5 per user). Admins can a
 vless://UUID@domain:443?type=tcp&security=reality&pbk=PUBLIC_KEY&sid=SHORT_ID&sni=www.microsoft.com&fp=chrome&flow=xtls-rprx-vision#DeviceName
 ```
 
-**Recommended clients:**
+> **Important:** `flow=xtls-rprx-vision` is required — make sure your client has it enabled.
 
-| Platform | Client |
-|----------|--------|
-| Android  | v2rayNG, Hiddify |
-| iOS      | Streisand, FoXray |
-| Windows  | Hiddify, v2rayN |
-| macOS    | FoXray, Hiddify |
+## Recommended clients
 
-The `flow=xtls-rprx-vision` parameter is required — make sure your client has it enabled.
+| Platform | Client | Notes |
+|----------|--------|-------|
+| iOS      | [HAPP](https://apps.apple.com/app/happ-proxy-utility/id6504287215) | Recommended for mobile |
+| Android  | [HAPP](https://play.google.com/store/apps/details?id=com.boos.happ) | Also available as APK from GitHub |
+| Windows  | [Hiddify](https://github.com/hiddify/hiddify-app/releases/latest), [v2rayN](https://github.com/2dust/v2rayN/releases/latest) | |
+| macOS    | [Hiddify](https://github.com/hiddify/hiddify-app/releases/latest), [FoXray](https://apps.apple.com/app/foxray/id6448898396) | |
+| Linux    | [Hiddify](https://github.com/hiddify/hiddify-app/releases/latest), [v2rayA](https://github.com/v2rayA/v2rayA/releases/latest) | |
+
+A built-in setup guide with screenshots is available at `https://YOUR_DOMAIN/guide` after login.
 
 ## Telegram bot commands
 
@@ -114,6 +127,16 @@ Superadmin commands:
 /listusers
 ```
 
+## Statistics
+
+The API polls Xray every 30 seconds via Docker socket exec:
+
+- **Traffic** — daily bytes up/down per device, accumulated in `traffic_daily` table
+- **Online status** — via `xray api statsgetallonlineusers`, updated every poll
+- **Client IPs** — via `xray api statsonlineiplist` and access log parsing
+- **Connection log** — stored in `connection_log` table, shown per device in the panel
+- **Audit log** — all user actions (login, device CRUD, user management) in `audit_log` table, visible to superadmin only with pagination
+
 ## Updating
 
 ```bash
@@ -123,7 +146,7 @@ docker compose build --pull
 docker compose up -d
 ```
 
-Database migrations run automatically on API startup.
+Database migrations run automatically on API startup — safe to run on existing installations.
 
 ## Backup
 
@@ -177,16 +200,26 @@ Internet
                                     |
                             xray/config.json
                             (managed by API, hot-reloaded via SIGUSR1)
-                                    |
-                              PostgreSQL 15
 ```
 
-Traffic flow for VPN clients:
+**Traffic flow for VPN clients:**
 1. Client connects to `YOUR_DOMAIN:443` with SNI `www.microsoft.com`
 2. Nginx routes the raw TCP stream to xray (non-domain SNI → xray)
 3. Xray performs the Reality handshake — traffic looks like HTTPS to Microsoft
-4. VLESS layer authenticates the client by UUID + flow
+4. VLESS layer authenticates the client by UUID + xtls-rprx-vision flow
 5. Traffic is forwarded to the internet from the server
+
+> **Note:** Do not use `proxy_protocol` between nginx and xray — it is incompatible with REALITY and causes silent connection failures.
+
+## Database schema
+
+| Table | Description |
+|-------|-------------|
+| `users` | Accounts with login, role, expiry |
+| `devices` | Per-device UUID, last IP, last seen |
+| `traffic_daily` | Daily bytes up/down per device |
+| `connection_log` | Per-device connection timestamps and IPs |
+| `audit_log` | Admin-visible action log (login, device/user CRUD) |
 
 ## File structure
 
@@ -199,7 +232,10 @@ vless-vpn/
 ├── api/
 │   ├── src/
 │   │   ├── index.js
-│   │   ├── xray.js       # Config management + SIGUSR1 hot-reload
+│   │   ├── xray.js       # Config management + Docker exec stats API
+│   │   ├── poller.js     # Background stats collector (30s interval)
+│   │   ├── migrate.js    # Idempotent DB migrations on startup
+│   │   ├── audit.js      # Audit log helper
 │   │   ├── db.js
 │   │   ├── auth.js
 │   │   └── routes/       # auth, devices, users, stats
@@ -207,6 +243,9 @@ vless-vpn/
 │       └── create-admin.js
 ├── bot/                  # Telegram bot (Python)
 ├── frontend/             # React + Vite SPA
+│   └── src/
+│       ├── pages/        # Dashboard, Admin, Settings, Guide
+│       └── components/   # DeviceCard, TrafficChart, QRModal, ...
 ├── nginx/
 │   ├── nginx.conf.template
 │   └── Dockerfile
@@ -220,7 +259,8 @@ vless-vpn/
 ## Security notes
 
 - Secrets live in `.env` only (never committed to git)
-- JWT tokens are blacklisted on logout (stored in DB)
-- Login endpoint is rate-limited (5 req/min per IP)
+- JWT tokens are blacklisted on logout
+- Login endpoint is rate-limited (10 req/min per IP)
 - Superadmin cannot be deleted via API
 - Reality protocol makes VPN traffic indistinguishable from normal HTTPS
+- All admin actions are recorded in the audit log with timestamps and IPs
