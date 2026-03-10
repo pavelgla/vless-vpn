@@ -4,6 +4,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
 import Settings from './pages/Settings';
+import Guide from './pages/Guide';
 import Layout from './components/Layout';
 
 function PrivateRoute({ children }) {
@@ -30,6 +31,7 @@ export default function App() {
       <Route element={<PrivateRoute><Layout /></PrivateRoute>}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/settings"  element={<Settings />} />
+        <Route path="/guide"     element={<Guide />} />
         <Route path="/admin"     element={<AdminRoute><Admin /></AdminRoute>} />
       </Route>
       <Route path="*" element={<Navigate to={user ? '/dashboard' : '/login'} replace />} />
