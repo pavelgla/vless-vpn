@@ -371,16 +371,20 @@ function auditDetails(action, details) {
   return '';
 }
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
 function AuditLog() {
-  const [entries, setEntries]   = useState(null);
-  const [loading, setLoading]   = useState(false);
-  const [open,    setOpen]      = useState(false);
+  const [entries,  setEntries]  = useState(null);
+  const [loading,  setLoading]  = useState(false);
+  const [open,     setOpen]     = useState(false);
+  const [pageSize, setPageSize] = useState(25);
+  const [page,     setPage]     = useState(0);
   const loaded = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await statsApi.audit(200);
+      const res = await statsApi.audit(500);
       setEntries(res.data);
       loaded.current = true;
     } catch {
@@ -395,63 +399,148 @@ function AuditLog() {
     setOpen(v => !v);
   };
 
+  const handlePageSize = (n) => {
+    setPageSize(n);
+    setPage(0);
+  };
+
+  const totalPages  = entries ? Math.ceil(entries.length / pageSize) : 0;
+  const pageEntries = entries ? entries.slice(page * pageSize, (page + 1) * pageSize) : [];
+
   return (
     <div className="card">
       <button
         className="flex w-full items-center justify-between text-sm font-medium"
         onClick={toggle}
       >
-        <span>Журнал действий</span>
+        <span>Журнал действий {entries ? <span className="text-gray-500 font-normal">({entries.length})</span> : ''}</span>
         <span className="text-gray-500">{open ? '▲' : '▼'}</span>
       </button>
 
       {open && (
-        <div className="mt-4">
+        <div className="mt-4 space-y-3">
           {loading && <p className="text-sm text-gray-500">Загрузка...</p>}
+
           {entries && entries.length === 0 && (
             <p className="text-sm text-gray-500">Записей нет</p>
           )}
+
           {entries && entries.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="table-auto w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Время</th>
-                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Пользователь</th>
-                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Действие</th>
-                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Детали</th>
-                    <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">IP</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {entries.map(e => {
-                    const meta = ACTION_LABELS[e.action] || { label: e.action, cls: 'bg-gray-800 text-gray-400' };
-                    return (
-                      <tr key={e.id} className="border-t border-gray-800 hover:bg-gray-900/30">
-                        <td className="py-2 px-3 text-xs text-gray-500 whitespace-nowrap">
-                          {new Date(e.created_at).toLocaleString('ru-RU', {
-                            day: '2-digit', month: '2-digit', year: '2-digit',
-                            hour: '2-digit', minute: '2-digit', second: '2-digit',
-                          })}
-                        </td>
-                        <td className="py-2 px-3 text-xs font-medium">
-                          {e.user_login || <span className="text-gray-600">—</span>}
-                        </td>
-                        <td className="py-2 px-3">
-                          <span className={`badge text-xs ${meta.cls}`}>{meta.label}</span>
-                        </td>
-                        <td className="py-2 px-3 text-xs text-gray-400">
-                          {auditDetails(e.action, e.details) || <span className="text-gray-600">—</span>}
-                        </td>
-                        <td className="py-2 px-3 text-xs font-mono text-gray-500">
-                          {e.ip || '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {/* Controls */}
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <span>Строк на странице:</span>
+                  {PAGE_SIZE_OPTIONS.map(n => (
+                    <button
+                      key={n}
+                      onClick={() => handlePageSize(n)}
+                      className={`px-2 py-1 rounded ${
+                        pageSize === n
+                          ? 'bg-brand-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-xs text-gray-500">
+                  {page * pageSize + 1}–{Math.min((page + 1) * pageSize, entries.length)} из {entries.length}
+                </span>
+              </div>
+
+              {/* Table */}
+              <div className="overflow-x-auto">
+                <table className="table-auto w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Время</th>
+                      <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Пользователь</th>
+                      <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Действие</th>
+                      <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">Детали</th>
+                      <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">IP</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageEntries.map(e => {
+                      const meta = ACTION_LABELS[e.action] || { label: e.action, cls: 'bg-gray-800 text-gray-400' };
+                      return (
+                        <tr key={e.id} className="border-t border-gray-800 hover:bg-gray-900/30">
+                          <td className="py-2 px-3 text-xs text-gray-500 whitespace-nowrap">
+                            {new Date(e.created_at).toLocaleString('ru-RU', {
+                              day: '2-digit', month: '2-digit', year: '2-digit',
+                              hour: '2-digit', minute: '2-digit', second: '2-digit',
+                            })}
+                          </td>
+                          <td className="py-2 px-3 text-xs font-medium">
+                            {e.user_login || <span className="text-gray-600">—</span>}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className={`badge text-xs ${meta.cls}`}>{meta.label}</span>
+                          </td>
+                          <td className="py-2 px-3 text-xs text-gray-400">
+                            {auditDetails(e.action, e.details) || <span className="text-gray-600">—</span>}
+                          </td>
+                          <td className="py-2 px-3 text-xs font-mono text-gray-500">
+                            {e.ip || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-1 pt-1">
+                  <button
+                    onClick={() => setPage(0)}
+                    disabled={page === 0}
+                    className="px-2 py-1 text-xs rounded bg-gray-800 text-gray-400 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default"
+                  >
+                    «
+                  </button>
+                  <button
+                    onClick={() => setPage(p => p - 1)}
+                    disabled={page === 0}
+                    className="px-2 py-1 text-xs rounded bg-gray-800 text-gray-400 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default"
+                  >
+                    ‹
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i)
+                    .filter(i => Math.abs(i - page) <= 2)
+                    .map(i => (
+                      <button
+                        key={i}
+                        onClick={() => setPage(i)}
+                        className={`px-2.5 py-1 text-xs rounded ${
+                          i === page
+                            ? 'bg-brand-600 text-white'
+                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                        }`}
+                      >
+                        {i + 1}
+                      </button>
+                    ))}
+                  <button
+                    onClick={() => setPage(p => p + 1)}
+                    disabled={page >= totalPages - 1}
+                    className="px-2 py-1 text-xs rounded bg-gray-800 text-gray-400 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default"
+                  >
+                    ›
+                  </button>
+                  <button
+                    onClick={() => setPage(totalPages - 1)}
+                    disabled={page >= totalPages - 1}
+                    className="px-2 py-1 text-xs rounded bg-gray-800 text-gray-400 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default"
+                  >
+                    »
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
