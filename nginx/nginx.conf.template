@@ -75,14 +75,10 @@ http {
         }
     }
 
-    # HTTPS web panel — receives PROXY protocol from the stream proxy above
+    # HTTPS web panel — receives plain TLS from the stream proxy above
     server {
-        listen 8443 ssl proxy_protocol;
+        listen 8443 ssl;
         server_name ${DOMAIN};
-
-        # Restore real client IP from PROXY protocol header
-        real_ip_header    proxy_protocol;
-        set_real_ip_from  127.0.0.1;
 
         ssl_certificate     /etc/nginx/certs/fullchain.pem;
         ssl_certificate_key /etc/nginx/certs/privkey.pem;
