@@ -53,6 +53,18 @@ export default function Guide() {
               href="https://github.com/2dust/v2rayN/releases/latest"
             />
             <StoreButton
+              icon={<AppleIcon />}
+              label="Hiddify"
+              sublabel="macOS — рекомендуется"
+              href="https://github.com/hiddify/hiddify-app/releases/latest"
+            />
+            <StoreButton
+              icon={<AppleIcon />}
+              label="FoXray"
+              sublabel="macOS — Mac App Store"
+              href="https://apps.apple.com/app/foxray/id6448898396"
+            />
+            <StoreButton
               icon={<LinuxIcon />}
               label="Hiddify"
               sublabel="Linux (AppImage / deb)"
