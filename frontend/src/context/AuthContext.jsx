@@ -12,8 +12,11 @@ export function AuthProvider({ children }) {
     }
   });
 
-  const login = useCallback(async (loginStr, password) => {
-    const { data } = await authApi.login({ login: loginStr, password });
+  const login = useCallback(async (loginStr, password, captchaId, captchaAnswer) => {
+    const { data } = await authApi.login({
+      login: loginStr, password,
+      captcha_id: captchaId, captcha_answer: captchaAnswer,
+    });
     localStorage.setItem('token', data.token);
     const userData = { login: data.login, role: data.role };
     localStorage.setItem('user', JSON.stringify(userData));

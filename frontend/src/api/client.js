@@ -26,6 +26,7 @@ api.interceptors.response.use(
 );
 
 export const authApi = {
+  captcha:        ()     => api.get('/auth/captcha'),
   login:          (data) => api.post('/auth/login', data),
   logout:         ()     => api.post('/auth/logout'),
   changePassword: (data) => api.post('/auth/change-password', data),
