@@ -18,10 +18,11 @@ async def _get_token() -> str:
         return _token
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
-            f"{BASE_URL}/auth/login",
+            f"{BASE_URL}/auth/service-login",
             json={
-                "login":    os.getenv("SUPERADMIN_LOGIN"),
-                "password": os.getenv("SUPERADMIN_PASSWORD"),
+                "login":          os.getenv("SUPERADMIN_LOGIN"),
+                "password":       os.getenv("SUPERADMIN_PASSWORD"),
+                "service_secret": os.getenv("JWT_SECRET"),
             },
         )
         resp.raise_for_status()

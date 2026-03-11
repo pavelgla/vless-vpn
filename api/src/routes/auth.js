@@ -96,6 +96,47 @@ module.exports = async function authRoutes(fastify) {
     return reply.send({ id, question });
   });
 
+  // POST /auth/service-login — internal only (bot → api), no captcha
+  fastify.post('/service-login', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['login', 'password', 'service_secret'],
+        properties: {
+          login:          { type: 'string', minLength: 1, maxLength: 64 },
+          password:       { type: 'string', minLength: 1 },
+          service_secret: { type: 'string', minLength: 1 },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (request, reply) => {
+    const { login, password, service_secret } = request.body;
+
+    // Verify shared secret (must match JWT_SECRET — only services that know it can use this endpoint)
+    if (service_secret !== process.env.JWT_SECRET) {
+      return reply.status(403).send({ error: 'Forbidden', message: 'Invalid service secret' });
+    }
+
+    const { rows } = await db.query(
+      'SELECT id, login, password_hash, role, expires_at FROM users WHERE login = $1',
+      [login]
+    );
+    if (rows.length === 0) {
+      return reply.status(401).send({ error: 'Unauthorized', message: 'Invalid credentials' });
+    }
+    const user  = rows[0];
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return reply.status(401).send({ error: 'Unauthorized', message: 'Invalid credentials' });
+    }
+    if (user.expires_at && new Date(user.expires_at) < new Date()) {
+      return reply.status(403).send({ error: 'Forbidden', message: 'Account has expired' });
+    }
+    const { token } = signToken(fastify, user);
+    return reply.send({ token, role: user.role, login: user.login });
+  });
+
   // POST /auth/login
   fastify.post('/login', {
     config: {
