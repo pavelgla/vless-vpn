@@ -59,6 +59,7 @@ export default function Admin() {
   const [error,      setError]   = useState('');
 
   const [addOpen,       setAddOpen]       = useState(false);
+  const [editModal,     setEditModal]     = useState(null); // user being edited
   const [devicesModal,  setDevicesModal]  = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting,      setDeleting]      = useState(false);
@@ -67,6 +68,10 @@ export default function Admin() {
   const [form, setForm]           = useState({ login: '', password: '', expires_at: '', telegram_id: '' });
   const [formLoading, setFormLoading] = useState(false);
   const [formError,   setFormError]   = useState('');
+
+  const [editForm,    setEditForm]    = useState({ password: '', expires_at: '', telegram_id: '' });
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError,   setEditError]   = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -131,6 +136,36 @@ export default function Admin() {
     const res = await usersApi.devices(devicesModal.user.id);
     setDevicesModal(m => ({ ...m, devices: res.data }));
     await load();
+  };
+
+  const openEdit = (user) => {
+    setEditForm({
+      password:    '',
+      expires_at:  user.expires_at ? new Date(user.expires_at).toISOString().slice(0, 10) : '',
+      telegram_id: user.telegram_id ?? '',
+    });
+    setEditError('');
+    setEditModal(user);
+  };
+
+  const handleEditUser = async (e) => {
+    e.preventDefault();
+    setEditError('');
+    setEditLoading(true);
+    const patch = {};
+    if (editForm.password)    patch.password    = editForm.password;
+    if (editForm.expires_at)  patch.expires_at  = new Date(editForm.expires_at + 'T00:00:00Z').toISOString();
+    else                      patch.expires_at  = null;
+    patch.telegram_id = editForm.telegram_id ? parseInt(editForm.telegram_id, 10) : null;
+    try {
+      await usersApi.update(editModal.id, patch);
+      setEditModal(null);
+      await load();
+    } catch (err) {
+      setEditError(err.response?.data?.message || 'Ошибка');
+    } finally {
+      setEditLoading(false);
+    }
   };
 
   const handleAddUser = async (e) => {
@@ -248,6 +283,12 @@ export default function Admin() {
                       {u.role !== 'superadmin' && (
                         <>
                           <button
+                            className="btn-ghost btn-sm text-xs"
+                            onClick={() => openEdit(u)}
+                          >
+                            Изменить
+                          </button>
+                          <button
                             className={`btn-sm btn text-xs ${
                               isBlocked
                                 ? 'bg-emerald-900/30 hover:bg-emerald-900/60 text-emerald-400'
@@ -324,6 +365,60 @@ export default function Admin() {
               </button>
               <button type="submit" className="btn-primary" disabled={formLoading}>
                 {formLoading ? 'Создание...' : 'Создать'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Edit user modal */}
+      {editModal && (
+        <Modal title={`Редактировать — ${editModal.login}`} onClose={() => setEditModal(null)} size="sm">
+          <form onSubmit={handleEditUser} className="space-y-4">
+            <div>
+              <label className="text-sm text-gray-400 block mb-1.5">
+                Новый пароль <span className="text-gray-600">(оставьте пустым, чтобы не менять)</span>
+              </label>
+              <input type="password" value={editForm.password}
+                onChange={e => setEditForm(f => ({ ...f, password: e.target.value }))}
+                placeholder="Минимум 8 символов" minLength={8} />
+            </div>
+            <div>
+              <label className="text-sm text-gray-400 block mb-1.5">Срок действия</label>
+              <div className="flex gap-2">
+                <input type="date" value={editForm.expires_at}
+                  onChange={e => setEditForm(f => ({ ...f, expires_at: e.target.value }))}
+                  className="flex-1" />
+                <button type="button" className="btn-ghost text-xs px-3"
+                  onClick={() => setEditForm(f => ({ ...f, expires_at: '' }))}>
+                  Бессрочно
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="text-sm text-gray-400 block mb-1.5">Telegram ID</label>
+              <div className="flex gap-2">
+                <input type="number" value={editForm.telegram_id}
+                  onChange={e => setEditForm(f => ({ ...f, telegram_id: e.target.value }))}
+                  placeholder="123456789" className="flex-1" />
+                <button type="button" className="btn-ghost text-xs px-3"
+                  onClick={() => setEditForm(f => ({ ...f, telegram_id: '' }))}>
+                  Убрать
+                </button>
+              </div>
+              <p className="text-xs text-gray-600 mt-1">
+                Узнать ID: написать боту <span className="font-mono">@userinfobot</span> в Telegram
+              </p>
+            </div>
+            {editError && (
+              <p className="text-red-400 text-sm bg-red-900/20 px-3 py-2 rounded-lg">{editError}</p>
+            )}
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" className="btn-ghost" onClick={() => setEditModal(null)}>
+                Отмена
+              </button>
+              <button type="submit" className="btn-primary" disabled={editLoading}>
+                {editLoading ? 'Сохранение...' : 'Сохранить'}
               </button>
             </div>
           </form>
