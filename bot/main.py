@@ -277,28 +277,34 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             await query.message.reply_text(f"❌ Ошибка удаления: {e}")
         return
 
-    # ── Add button ──
-    if data == "add":
-        devices = await db.get_devices(user["id"])
-        if len(devices) >= 5:
-            await query.message.reply_text("❌ Достигнут лимит устройств (5).")
-            return
-        await query.message.reply_text(
-            "Введите *название* нового устройства\n"
-            "(например: `iPhone Макс` или `Ноутбук`):\n\n"
-            "Или /cancel для отмены.",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        context.user_data["adding_device"] = True
-        return AWAIT_DEVICE_NAME
-
     # ── Cancel ──
     if data == "cancel":
         await query.message.reply_text("Отменено.")
         return
 
 
-# ── /adddevice ────────────────────────────────────────────────────────────────
+# ── /adddevice + inline "add" button ─────────────────────────────────────────
+
+async def on_add_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Entry point for adddevice_conv via inline ➕ button."""
+    query = update.callback_query
+    await query.answer()
+    user = await get_linked_user(query.from_user.id)
+    if not user:
+        await query.message.reply_text("Аккаунт не привязан. Используйте /start")
+        return ConversationHandler.END
+    devices = await db.get_devices(user["id"])
+    if len(devices) >= 5:
+        await query.message.reply_text("❌ Достигнут лимит устройств (5).")
+        return ConversationHandler.END
+    await query.message.reply_text(
+        "Введите *название* нового устройства\n"
+        "(например: `iPhone Макс` или `Ноутбук`):\n\n"
+        "Или /cancel для отмены.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return AWAIT_DEVICE_NAME
+
 
 async def cmd_adddevice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = await get_linked_user(update.effective_user.id)
@@ -333,9 +339,9 @@ async def got_device_name(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def _create_device(update: Update, user, name: str) -> int:
     import re
-    if not re.match(r'^[\w\s\-]+$', name):
+    if not re.match(r'^[^<>\\/|?*\x00-\x1f]+$', name):
         await update.message.reply_text(
-            "❌ Название может содержать только буквы, цифры, пробелы и дефисы."
+            "❌ Название содержит недопустимые символы."
         )
         return ConversationHandler.END
     if len(name) > 32:
@@ -751,9 +757,12 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # /adddevice conversation
+    # /adddevice conversation (also started via inline ➕ button)
     adddevice_conv = ConversationHandler(
-        entry_points=[CommandHandler("adddevice", cmd_adddevice)],
+        entry_points=[
+            CommandHandler("adddevice", cmd_adddevice),
+            CallbackQueryHandler(on_add_button, pattern="^add$"),
+        ],
         states={
             AWAIT_DEVICE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_device_name)],
         },
