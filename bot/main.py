@@ -181,6 +181,7 @@ async def got_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.pop("awaiting_device_name", None)
     await update.message.reply_text("Отменено.")
     return ConversationHandler.END
 
@@ -277,33 +278,26 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             await query.message.reply_text(f"❌ Ошибка удаления: {e}")
         return
 
-    # ── Cancel ──
-    if data == "cancel":
-        await query.message.reply_text("Отменено.")
+    # ── Add button ──
+    if data == "add":
+        devices = await db.get_devices(user["id"])
+        if len(devices) >= 5:
+            await query.message.reply_text("❌ Достигнут лимит устройств (5).")
+            return
+        context.user_data["awaiting_device_name"] = True
+        await query.message.reply_text(
+            "Введите *название* нового устройства\n"
+            "(например: `iPhone Макс` или `Ноутбук`):\n\n"
+            "Или /cancel для отмены.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
         return
 
-
-# ── /adddevice + inline "add" button ─────────────────────────────────────────
-
-async def on_add_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Entry point for adddevice_conv via inline ➕ button."""
-    query = update.callback_query
-    await query.answer()
-    user = await get_linked_user(query.from_user.id)
-    if not user:
-        await query.message.reply_text("Аккаунт не привязан. Используйте /start")
-        return ConversationHandler.END
-    devices = await db.get_devices(user["id"])
-    if len(devices) >= 5:
-        await query.message.reply_text("❌ Достигнут лимит устройств (5).")
-        return ConversationHandler.END
-    await query.message.reply_text(
-        "Введите *название* нового устройства\n"
-        "(например: `iPhone Макс` или `Ноутбук`):\n\n"
-        "Или /cancel для отмены.",
-        parse_mode=ParseMode.MARKDOWN,
-    )
-    return AWAIT_DEVICE_NAME
+    # ── Cancel ──
+    if data == "cancel":
+        context.user_data.pop("awaiting_device_name", None)
+        await query.message.reply_text("Отменено.")
+        return
 
 
 async def cmd_adddevice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -761,12 +755,9 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # /adddevice conversation (also started via inline ➕ button)
+    # /adddevice conversation (command only — inline ➕ uses user_data instead)
     adddevice_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("adddevice", cmd_adddevice),
-            CallbackQueryHandler(on_add_button, pattern="^add$"),
-        ],
+        entry_points=[CommandHandler("adddevice", cmd_adddevice)],
         states={
             AWAIT_DEVICE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_device_name)],
         },
@@ -776,8 +767,21 @@ def main() -> None:
     app.add_handler(start_conv)
     app.add_handler(adddevice_conv)
 
-    # Inline button callback (includes "add" which triggers AWAIT_DEVICE_NAME)
+    # Inline button callbacks
     app.add_handler(CallbackQueryHandler(on_callback))
+
+    # Global text handler — catches device name typed after pressing ➕ inline button
+    async def handle_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not context.user_data.get("awaiting_device_name"):
+            return
+        context.user_data.pop("awaiting_device_name")
+        user = await get_linked_user(update.effective_user.id)
+        if not user:
+            await update.message.reply_text("Аккаунт не привязан. Используйте /start")
+            return
+        await _create_device(update, user, update.message.text.strip())
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_awaiting_text))
 
     # User commands
     app.add_handler(CommandHandler("help",      cmd_help))
