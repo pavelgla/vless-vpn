@@ -351,28 +351,32 @@ async def _create_device(update: Update, user, name: str) -> int:
     msg = await update.message.reply_text("⏳ Создаю устройство...")
     try:
         device = await api.add_device(user["id"], name)
+        link   = build_vless_link(device["uuid"], device["name"])
+        qr_buf = make_qr_image(link)
+        try:
+            await msg.delete()
+        except Exception:
+            pass  # не критично если не удалось удалить
+        await update.message.reply_photo(
+            qr_buf,
+            caption=(
+                f"✅ Устройство *{device['name']}* добавлено!\n\n"
+                f"`{link}`\n\n"
+                f"Отсканируйте QR-код или скопируйте ссылку в HAPP / Hiddify."
+            ),
+            parse_mode=ParseMode.MARKDOWN,
+        )
     except Exception as e:
         err = str(e)
+        log.error("_create_device error: %s", err)
         if "already exists" in err:
             text = f"❌ Устройство с именем *{name}* уже существует."
         else:
             text = f"❌ Ошибка: {err}"
-        await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN)
-        return ConversationHandler.END
-
-    link   = build_vless_link(device["uuid"], device["name"])
-    qr_buf = make_qr_image(link)
-
-    await msg.delete()
-    await update.message.reply_photo(
-        qr_buf,
-        caption=(
-            f"✅ Устройство *{device['name']}* добавлено!\n\n"
-            f"`{link}`\n\n"
-            f"Отсканируйте QR-код или скопируйте ссылку в HAPP / Hiddify."
-        ),
-        parse_mode=ParseMode.MARKDOWN,
-    )
+        try:
+            await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
 

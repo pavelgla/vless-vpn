@@ -109,11 +109,12 @@ async def get_traffic_summary(user_id: int):
 
 async def get_expiring_users(within_days: int):
     """Return users with telegram_id whose account expires within `within_days` days."""
+    from datetime import timedelta
     return await fetch(
         """SELECT id, login, telegram_id, expires_at FROM users
            WHERE telegram_id IS NOT NULL
              AND expires_at IS NOT NULL
              AND expires_at > NOW()
-             AND expires_at <= NOW() + $1::interval""",
-        f"{within_days} days",
+             AND expires_at <= NOW() + $1""",
+        timedelta(days=within_days),
     )
