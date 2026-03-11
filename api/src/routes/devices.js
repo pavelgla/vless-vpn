@@ -81,7 +81,7 @@ module.exports = async function devicesRoutes(fastify) {
         type: 'object',
         required: ['name'],
         properties: {
-          name: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[\\w\\s\\-]+$' },
+          name: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[^<>\\\\/|?*\\x00-\\x1f]+$' },
         },
         additionalProperties: false,
       },
@@ -142,7 +142,7 @@ module.exports = async function devicesRoutes(fastify) {
         type: 'object',
         required: ['name'],
         properties: {
-          name: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[\\w\\s\\-]+$' },
+          name: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[^<>\\\\/|?*\\x00-\\x1f]+$' },
         },
         additionalProperties: false,
       },
