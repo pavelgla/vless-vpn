@@ -87,6 +87,26 @@ async def get_all_users():
     )
 
 
+async def get_device_by_id(device_id: int, user_id: int):
+    return await fetchrow(
+        "SELECT id, name, uuid FROM devices WHERE id = $1 AND user_id = $2",
+        device_id, user_id,
+    )
+
+
+async def get_traffic_summary(user_id: int):
+    return await fetch(
+        """SELECT d.name, SUM(td.bytes_up) AS bytes_up, SUM(td.bytes_down) AS bytes_down
+           FROM traffic_daily td
+           JOIN devices d ON d.id = td.device_id
+           WHERE d.user_id = $1
+             AND td.date >= CURRENT_DATE - INTERVAL '30 days'
+           GROUP BY d.id, d.name
+           ORDER BY (SUM(td.bytes_up) + SUM(td.bytes_down)) DESC""",
+        user_id,
+    )
+
+
 async def get_expiring_users(within_days: int):
     """Return users with telegram_id whose account expires within `within_days` days."""
     return await fetch(

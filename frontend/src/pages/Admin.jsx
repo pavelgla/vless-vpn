@@ -64,7 +64,7 @@ export default function Admin() {
   const [deleting,      setDeleting]      = useState(false);
   const [statsModal,    setStatsModal]    = useState(null); // { user }
 
-  const [form, setForm]           = useState({ login: '', password: '', expires_at: '' });
+  const [form, setForm]           = useState({ login: '', password: '', expires_at: '', telegram_id: '' });
   const [formLoading, setFormLoading] = useState(false);
   const [formError,   setFormError]   = useState('');
 
@@ -139,11 +139,12 @@ export default function Admin() {
     setFormLoading(true);
     try {
       await usersApi.create({
-        login:      form.login,
-        password:   form.password,
-        expires_at: form.expires_at || undefined,
+        login:       form.login,
+        password:    form.password,
+        expires_at:  form.expires_at || undefined,
+        telegram_id: form.telegram_id ? parseInt(form.telegram_id, 10) : undefined,
       });
-      setForm({ login: '', password: '', expires_at: '' });
+      setForm({ login: '', password: '', expires_at: '', telegram_id: '' });
       setAddOpen(false);
       await load();
     } catch (err) {
@@ -219,10 +220,15 @@ export default function Admin() {
               return (
                 <tr key={u.id} className="hover:bg-gray-900/40">
                   <td className="font-medium">
-                    {u.login}
-                    {u.role === 'superadmin' && (
-                      <span className="ml-2 badge bg-brand-900/50 text-brand-400">admin</span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {u.login}
+                      {u.role === 'superadmin' && (
+                        <span className="badge bg-brand-900/50 text-brand-400">admin</span>
+                      )}
+                      {u.tg_linked && (
+                        <span title={`Telegram ID: ${u.telegram_id}`} className="text-blue-400 text-sm">📱</span>
+                      )}
+                    </div>
                   </td>
                   <td className="tabular-nums">{u.device_count}/5</td>
                   <td className="text-gray-400 tabular-nums text-sm">{fmtBytes(totalBytes)}</td>
@@ -297,6 +303,17 @@ export default function Admin() {
               </label>
               <input type="date" value={form.expires_at}
                 onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-sm text-gray-400 block mb-1.5">
+                Telegram ID <span className="text-gray-600">(необязательно)</span>
+              </label>
+              <input type="number" value={form.telegram_id}
+                onChange={e => setForm(f => ({ ...f, telegram_id: e.target.value }))}
+                placeholder="123456789" />
+              <p className="text-xs text-gray-600 mt-1">
+                Узнать ID: написать боту <span className="font-mono">@userinfobot</span> в Telegram
+              </p>
             </div>
             {formError && (
               <p className="text-red-400 text-sm bg-red-900/20 px-3 py-2 rounded-lg">{formError}</p>

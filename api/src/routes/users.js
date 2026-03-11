@@ -33,7 +33,8 @@ module.exports = async function usersRoutes(fastify) {
   // GET /users
   fastify.get('/', adminHooks, async (_request, reply) => {
     const { rows } = await db.query(
-      `SELECT u.id, u.login, u.role, u.expires_at, u.created_at, u.telegram_id,
+      `SELECT u.id, u.login, u.role, u.expires_at, u.created_at,
+              u.telegram_id, u.telegram_id IS NOT NULL AS tg_linked,
               COUNT(d.id)::int AS device_count
        FROM users u
        LEFT JOIN devices d ON d.user_id = u.id
@@ -51,15 +52,16 @@ module.exports = async function usersRoutes(fastify) {
         type: 'object',
         required: ['login', 'password'],
         properties: {
-          login:      { type: 'string', minLength: 1, maxLength: 64 },
-          password:   { type: 'string', minLength: 8, maxLength: 128 },
-          expires_at: { type: 'string', format: 'date-time', nullable: true },
+          login:       { type: 'string', minLength: 1, maxLength: 64 },
+          password:    { type: 'string', minLength: 8, maxLength: 128 },
+          expires_at:  { type: 'string', format: 'date-time', nullable: true },
+          telegram_id: { type: 'integer', nullable: true },
         },
         additionalProperties: false,
       },
     },
   }, async (request, reply) => {
-    const { login, password, expires_at } = request.body;
+    const { login, password, expires_at, telegram_id } = request.body;
 
     const { rows: existing } = await db.query(
       'SELECT id FROM users WHERE login = $1',
@@ -71,10 +73,10 @@ module.exports = async function usersRoutes(fastify) {
 
     const hash = await bcrypt.hash(password, 12);
     const { rows } = await db.query(
-      `INSERT INTO users (login, password_hash, role, expires_at)
-       VALUES ($1, $2, 'user', $3)
-       RETURNING id, login, role, expires_at, created_at`,
-      [login, hash, expires_at || null]
+      `INSERT INTO users (login, password_hash, role, expires_at, telegram_id)
+       VALUES ($1, $2, 'user', $3, $4)
+       RETURNING id, login, role, expires_at, telegram_id, created_at`,
+      [login, hash, expires_at || null, telegram_id || null]
     );
 
     audit.log(request.user.sub, 'user_create', { user_id: rows[0].id, login }, request.ip);
@@ -89,16 +91,17 @@ module.exports = async function usersRoutes(fastify) {
       body: {
         type: 'object',
         properties: {
-          expires_at: { type: 'string', format: 'date-time', nullable: true },
-          disabled:   { type: 'boolean' },
-          password:   { type: 'string', minLength: 8, maxLength: 128 },
+          expires_at:  { type: 'string', format: 'date-time', nullable: true },
+          disabled:    { type: 'boolean' },
+          password:    { type: 'string', minLength: 8, maxLength: 128 },
+          telegram_id: { type: 'integer', nullable: true },
         },
         additionalProperties: false,
       },
     },
   }, async (request, reply) => {
     const { id } = request.params;
-    const { expires_at, disabled, password } = request.body;
+    const { expires_at, disabled, password, telegram_id } = request.body;
 
     const { rows: existing } = await db.query('SELECT id, login, expires_at FROM users WHERE id = $1', [id]);
     if (existing.length === 0) {
@@ -124,6 +127,11 @@ module.exports = async function usersRoutes(fastify) {
       const hash = await bcrypt.hash(password, 12);
       updates.push(`password_hash = $${idx++}`);
       values.push(hash);
+    }
+
+    if (telegram_id !== undefined) {
+      updates.push(`telegram_id = $${idx++}`);
+      values.push(telegram_id || null);
     }
 
     if (updates.length === 0) {
