@@ -186,9 +186,9 @@ async function getOnlineIPs(email) {
 
 async function reloadConfig() {
   try {
-    const res = await dockerRequest('POST', '/containers/xray/kill?signal=SIGUSR1', null);
+    const res = await dockerRequest('POST', '/containers/xray/kill?signal=SIGHUP', null);
     if (res.status === 204) {
-      console.log('[xray] SIGUSR1 sent — config reloaded');
+      console.log('[xray] SIGHUP sent — config reloaded');
     } else {
       console.error('[xray] Docker kill returned status', res.status);
     }
@@ -202,6 +202,7 @@ async function reloadConfig() {
 async function addClient(uuid, email) {
   if (!uuid || !email) throw new Error('uuid and email are required');
 
+  // 1. Persist to config file (survives container restart)
   const config  = readConfig();
   const inbound = getInbound(config);
 
@@ -211,25 +212,45 @@ async function addClient(uuid, email) {
 
   inbound.settings.clients.push({ id: uuid, email, flow: 'xtls-rprx-vision' });
   writeConfig(config);
-  await reloadConfig();
-  console.log(`[xray] Client added: ${email} (${uuid})`);
+
+  // 2. Add to running xray instance via HandlerService API (no restart needed)
+  // adu expects an xray config fragment written to a temp file inside the container
+  const fragment = JSON.stringify({
+    inbounds: [{ tag: INBOUND_TAG, port: 443, protocol: 'vless', settings: {
+      clients: [{ id: uuid, email, flow: 'xtls-rprx-vision' }],
+      decryption: 'none',
+    }}],
+  });
+  const tmpPath = `/tmp/xray-adduser-${uuid}.json`;
+  await dockerExec(['sh', '-c', `printf '%s' '${fragment.replace(/'/g, "'\\''")}' > ${tmpPath}`]);
+  const result = await dockerExec(['xray', 'api', 'adu', '-s', '127.0.0.1:8080', tmpPath]);
+  await dockerExec(['rm', '-f', tmpPath]);
+  if (!result.includes('Added 1')) throw new Error(`xray adu failed: ${result}`);
+  console.log(`[xray] Client added live: ${email} (${uuid})`);
 }
 
 async function removeClient(uuid) {
   if (!uuid) throw new Error('uuid is required');
 
+  // 1. Remove from config file
   const config  = readConfig();
   const inbound = getInbound(config);
-  const before  = inbound.settings.clients.length;
+  const client  = inbound.settings.clients.find(c => c.id === uuid);
+  if (!client) throw new Error(`Client with uuid "${uuid}" not found`);
+  const { email } = client;
 
   inbound.settings.clients = inbound.settings.clients.filter(c => c.id !== uuid);
-  if (inbound.settings.clients.length === before) {
-    throw new Error(`Client with uuid "${uuid}" not found`);
-  }
-
   writeConfig(config);
-  await reloadConfig();
-  console.log(`[xray] Client removed: ${uuid}`);
+
+  // 2. Remove from running xray instance via HandlerService API
+  const result = await dockerExec([
+    'xray', 'api', 'rmu',
+    '-s', '127.0.0.1:8080',
+    `-tag=${INBOUND_TAG}`,
+    email,
+  ]);
+  if (!result.includes('Removed 1')) throw new Error(`xray rmu failed: ${result}`);
+  console.log(`[xray] Client removed live: ${uuid}`);
 }
 
 function listClients() {
